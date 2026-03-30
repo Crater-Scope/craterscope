@@ -1,0 +1,25 @@
+{
+  "name": "craterscope",
+  "version": "0.1.0",
+  "description": "Crater Scope — scope enforcement for AI coding tools",
+  "type": "module",
+  "bin": {
+    "craterscope": "./bin/craterscope.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "keywords": [
+    "claude-code",
+    "scope",
+    "enforcement",
+    "ai",
+    "plugin"
+  ],
+  "author": "Crater Scope",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Crater-Scope/craterscope"
+  }
+}
