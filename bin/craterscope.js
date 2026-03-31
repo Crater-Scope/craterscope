@@ -180,41 +180,38 @@ async function init() {
     console.log(`    /plugin install ${PLUGIN_NAME}`);
   }
 
-  // Step 6: Sync scopes if in a craterscope repo
+  // Step 6: Sync scopes if in a git repo
   console.log('');
   try {
-    let dir = process.cwd();
-    let projectId = '';
-    while (dir !== '/') {
-      const f = join(dir, '.craterscope.json');
-      if (existsSync(f)) {
-        try {
-          projectId = JSON.parse(readFileSync(f, 'utf-8')).project_id;
-        } catch {}
-        break;
-      }
-      const parent = join(dir, '..');
-      if (parent === dir) break;
-      dir = parent;
-    }
+    const remoteUrl = execSync('git remote get-url origin 2>/dev/null', { encoding: 'utf-8' }).trim();
+    const repoName = remoteUrl
+      .replace(/^https?:\/\/[^/]+\//, '')
+      .replace(/^git@[^:]+:/, '')
+      .replace(/\.git$/, '');
 
-    if (projectId) {
-      console.log(`  Syncing scopes for project ${projectId}...`);
+    if (repoName && repoName.includes('/')) {
+      console.log(`  Syncing scopes for ${repoName}...`);
       try {
-        const url = `${config.apiUrl}/api/plugin/scopes?project_id=${encodeURIComponent(projectId)}`;
+        const url = `${config.apiUrl}/api/plugin/scopes?repo=${encodeURIComponent(repoName)}`;
         const res = await fetch(url, {
           headers: { 'Authorization': `Bearer ${config.apiKey}` },
           signal: AbortSignal.timeout(15000),
         });
         if (res.ok) {
           const data = await res.json();
-          const cachePath = join(CACHE_DIR, `scopes-${projectId}.json`);
-          writeFileSync(cachePath, JSON.stringify({
-            ...data,
-            project_id: projectId,
-            fetched_at: Date.now(),
-          }, null, 2), { mode: 0o600 });
-          console.log(`  ✓ Scopes synced (${(data.assigned_scopes || []).length} scopes assigned)`);
+          if (data.assigned_scopes && data.assigned_scopes.length > 0) {
+            const { createHash } = await import('node:crypto');
+            const cacheKey = createHash('md5').update(repoName).digest('hex').slice(0, 12);
+            const cachePath = join(CACHE_DIR, `scopes-${cacheKey}.json`);
+            writeFileSync(cachePath, JSON.stringify({
+              ...data,
+              repo_name: repoName,
+              fetched_at: Date.now(),
+            }, null, 2), { mode: 0o600 });
+            console.log(`  ✓ Scopes synced (${data.assigned_scopes.length} scopes assigned)`);
+          } else {
+            console.log('  No scopes assigned for this repo yet.');
+          }
         } else {
           console.log(`  ⚠ Could not sync scopes (API returned ${res.status})`);
         }
@@ -222,8 +219,7 @@ async function init() {
         console.log('  ⚠ Could not reach API to sync scopes');
       }
     } else {
-      console.log('  No .craterscope.json found in this repo.');
-      console.log('  Scopes will sync automatically when you open Claude Code in a managed repo.');
+      console.log('  Not in a git repo. Scopes will sync when you open Claude Code in a managed repo.');
     }
   } catch {}
 
@@ -263,7 +259,7 @@ function status() {
           const data = JSON.parse(readFileSync(join(CACHE_DIR, f), 'utf-8'));
           const age = Date.now() - (data.fetched_at || 0);
           const hours = Math.round(age / 3600000);
-          console.log(`    ${data.project_id || f}: ${(data.assigned_scopes || []).length} scopes (${hours}h ago)`);
+          console.log(`    ${data.repo_name || data.project_id || f}: ${(data.assigned_scopes || []).length} scopes (${hours}h ago)`);
         } catch {}
       });
     }
