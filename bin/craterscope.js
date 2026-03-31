@@ -10,7 +10,7 @@ const CONFIG_PATH = join(CRATERSCOPE_DIR, 'config.json');
 const CACHE_DIR = join(CRATERSCOPE_DIR, 'cache');
 
 const API_URL = 'https://affable-armadillo-43.convex.site';
-const DASHBOARD_URL = 'http://localhost:5173'; // TODO: update for production
+const DASHBOARD_URL = 'https://app.craterscope.com';
 const MARKETPLACE = 'Crater-Scope/claude-plugins';
 const PLUGIN_NAME = 'craterscope';
 

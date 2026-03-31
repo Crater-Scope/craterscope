@@ -1,6 +1,6 @@
 {
   "name": "craterscope",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Crater Scope — scope enforcement for AI coding tools",
   "type": "module",
   "bin": {
