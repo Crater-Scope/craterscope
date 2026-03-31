@@ -9,7 +9,7 @@ const CRATERSCOPE_DIR = join(homedir(), '.craterscope');
 const CONFIG_PATH = join(CRATERSCOPE_DIR, 'config.json');
 const CACHE_DIR = join(CRATERSCOPE_DIR, 'cache');
 
-const API_URL = 'https://affable-armadillo-43.convex.site';
+const API_URL = 'https://tidy-buzzard-924.convex.site';
 const DASHBOARD_URL = 'https://app.craterscope.com';
 const MARKETPLACE = 'Crater-Scope/claude-plugins';
 const PLUGIN_NAME = 'craterscope';
