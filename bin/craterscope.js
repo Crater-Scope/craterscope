@@ -4,13 +4,13 @@ import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { createInterface } from 'node:readline';
 
 const CRATERSCOPE_DIR = join(homedir(), '.craterscope');
 const CONFIG_PATH = join(CRATERSCOPE_DIR, 'config.json');
 const CACHE_DIR = join(CRATERSCOPE_DIR, 'cache');
 
 const API_URL = 'https://affable-armadillo-43.convex.site';
+const DASHBOARD_URL = 'http://localhost:5173'; // TODO: update for production
 const MARKETPLACE = 'Crater-Scope/claude-plugins';
 const PLUGIN_NAME = 'craterscope';
 
@@ -47,58 +47,97 @@ async function init() {
   }
   console.log('  ✓ Claude Code detected');
 
-  // Step 2: Authenticate with email + invite code
+  // Step 2: Device code auth flow
   console.log('');
-  console.log('  Enter the credentials your team admin gave you.');
-  console.log('');
+  console.log('  Requesting authorization...');
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const ask = (q) => new Promise(r => rl.question(q, r));
-
-  const email = await ask('  Email: ');
-  const code = await ask('  Invite code: ');
-  rl.close();
-
-  if (!email || !code) {
-    console.log('  ❌ Email and invite code are required.');
-    process.exit(1);
-  }
-
-  // Call the API to validate invite and get API key
-  console.log('');
-  console.log('  Authenticating...');
-
-  let authResult;
+  let deviceCode, verificationUrl;
   try {
-    const res = await fetch(`${API_URL}/api/cli/auth`, {
+    const res = await fetch(`${API_URL}/api/cli/device-code`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: email.trim().toLowerCase(),
-        code: code.trim(),
-      }),
       signal: AbortSignal.timeout(15000),
     });
-
-    authResult = await res.json();
-
-    if (!res.ok || authResult.error) {
-      console.log(`  ❌ ${authResult.error || 'Authentication failed'}`);
-      process.exit(1);
-    }
+    const data = await res.json();
+    deviceCode = data.device_code;
+    verificationUrl = data.verification_url;
   } catch (err) {
     console.log(`  ❌ Could not reach Crater Scope API: ${err.message}`);
     process.exit(1);
   }
 
-  console.log(`  ✓ Authenticated — joined ${authResult.orgName}`);
+  console.log('');
+  console.log(`  Your device code: ${deviceCode}`);
+  console.log('');
+  console.log('  Opening browser for authorization...');
 
-  // Save config
+  // Open browser
+  try {
+    const openCmd = process.platform === 'darwin' ? 'open' :
+                    process.platform === 'win32' ? 'start' : 'xdg-open';
+    execSync(`${openCmd} "${verificationUrl}"`, { stdio: 'pipe' });
+  } catch {
+    console.log(`  Could not open browser. Visit this URL manually:`);
+    console.log(`  ${verificationUrl}`);
+  }
+
+  console.log('');
+  console.log('  Waiting for authorization...');
+
+  // Step 3: Poll for authorization
+  const maxAttempts = 120; // 10 minutes at 5-second intervals
+  let authorized = false;
+  let apiKey, orgName, email;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    await sleep(5000);
+
+    try {
+      const res = await fetch(`${API_URL}/api/cli/poll?device_code=${deviceCode}`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = await res.json();
+
+      if (data.status === 'authorized') {
+        apiKey = data.apiKey;
+        orgName = data.orgName;
+        email = data.email;
+        authorized = true;
+        break;
+      }
+
+      if (data.status === 'expired') {
+        console.log('  ❌ Authorization timed out. Run `npx craterscope init` to try again.');
+        process.exit(1);
+      }
+
+      if (data.status === 'error') {
+        console.log(`  ❌ ${data.error}`);
+        process.exit(1);
+      }
+
+      // Still pending — show a dot for progress
+      process.stdout.write('.');
+    } catch {
+      // Network error — keep trying
+      process.stdout.write('?');
+    }
+  }
+
+  if (!authorized) {
+    console.log('\n  ❌ Authorization timed out.');
+    process.exit(1);
+  }
+
+  console.log('');
+  console.log(`  ✓ Authorized — joined ${orgName}`);
+
+  // Step 4: Save config
   const config = {
     apiUrl: API_URL,
-    apiKey: authResult.apiKey,
-    email: email.trim().toLowerCase(),
-    orgName: authResult.orgName,
+    apiKey,
+    email,
+    orgName,
     installedAt: new Date().toISOString(),
   };
 
@@ -107,19 +146,16 @@ async function init() {
   writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
   console.log('  ✓ Credentials saved');
 
-  // Step 3: Install the Claude Code plugin
+  // Step 5: Install Claude Code plugin
   console.log('');
   console.log('  Installing Crater Scope plugin for Claude Code...');
 
   try {
     try {
-      execSync(`claude plugin marketplace add ${MARKETPLACE}`, {
-        stdio: 'pipe',
-        encoding: 'utf-8',
-      });
+      execSync(`claude plugin marketplace add ${MARKETPLACE}`, { stdio: 'pipe', encoding: 'utf-8' });
       console.log('  ✓ Marketplace added');
     } catch (e) {
-      if (e.stderr && e.stderr.includes('already')) {
+      if (e.stderr?.includes('already')) {
         console.log('  ✓ Marketplace already configured');
       } else {
         console.log(`  ⚠ Marketplace: ${e.stderr || e.message}`);
@@ -127,14 +163,11 @@ async function init() {
     }
 
     try {
-      const marketplaceSlug = MARKETPLACE.replace('/', '-');
-      execSync(`claude plugin install ${PLUGIN_NAME}@${marketplaceSlug}`, {
-        stdio: 'pipe',
-        encoding: 'utf-8',
-      });
+      const slug = MARKETPLACE.replace('/', '-');
+      execSync(`claude plugin install ${PLUGIN_NAME}@${slug}`, { stdio: 'pipe', encoding: 'utf-8' });
       console.log('  ✓ Plugin installed');
     } catch (e) {
-      if (e.stderr && e.stderr.includes('already')) {
+      if (e.stderr?.includes('already')) {
         console.log('  ✓ Plugin already installed');
       } else {
         console.log(`  ⚠ Plugin install: ${e.stderr || e.message}`);
@@ -147,7 +180,7 @@ async function init() {
     console.log(`    /plugin install ${PLUGIN_NAME}`);
   }
 
-  // Step 4: Sync scopes for current repo (if in one)
+  // Step 6: Sync scopes if in a craterscope repo
   console.log('');
   try {
     let dir = process.cwd();
@@ -192,9 +225,7 @@ async function init() {
       console.log('  No .craterscope.json found in this repo.');
       console.log('  Scopes will sync automatically when you open Claude Code in a managed repo.');
     }
-  } catch {
-    // Not in a git repo
-  }
+  } catch {}
 
   // Done
   console.log('');
@@ -223,7 +254,6 @@ function status() {
   console.log(`  Key: ${config.apiKey.slice(0, 8)}...`);
   console.log(`  Installed: ${config.installedAt}`);
 
-  // List cached scopes
   if (existsSync(CACHE_DIR)) {
     const files = readdirSync(CACHE_DIR).filter(f => f.startsWith('scopes-'));
     if (files.length > 0) {
@@ -259,4 +289,8 @@ function printUsage() {
   console.log('    npx craterscope status    Show current configuration');
   console.log('    npx craterscope logout    Remove credentials');
   console.log('');
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
